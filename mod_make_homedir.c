@@ -16,6 +16,7 @@
  * - Automatically creates directories and their parents (`mkdir -p` style).
  * - Enforces secure permissions and ownership (`chown`) to a specified user/group.
  * - Protects against symlink attacks using `lstat`.
+ * - Actively corrects permissions if they are improperly changed by external processes.
  *
  * Compilation:
  * apxs -i -a -c mod_make_homedir.c
@@ -181,6 +182,14 @@ static apr_status_t create_secure_recursive_dir(server_rec *s, const char *path,
                 if (chown(parent_path, uid, gid) == -1) {
                     ap_log_error(APLOG_MARK, APLOG_ERR, errno, s,
                                  "mod_make_homedir: Failed to chown parent directory %s: %s", parent_path, strerror(errno));
+                    apr_pool_destroy(temp_pool);
+                    return APR_EGENERAL;
+                }
+            }
+            if ((st.st_mode & perms) != perms) {
+                 if (chmod(parent_path, perms) == -1) {
+                    ap_log_error(APLOG_MARK, APLOG_ERR, errno, s,
+                                 "mod_make_homedir: chmod failed for %s: %s", parent_path, strerror(errno));
                     apr_pool_destroy(temp_pool);
                     return APR_EGENERAL;
                 }
