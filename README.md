@@ -2,7 +2,7 @@
 
 **mod_logdir_improved** is an Apache HTTP Server module that provides **per-virtual-host dynamic log directories** with secure ownership and automatic directory creation.  
 It supports both **Apache 2.2 (fixed log path)** and **Apache 2.4+ (dynamic log paths with LogFormat expressions)**.
-
+And as a bonus, I created a module to solve Apache's Docroot problem. It's simple, but it fixes the issue where Apache fails to start if the home directory is missing during startup.
 ---
 
 ## Features
@@ -30,6 +30,40 @@ It supports both **Apache 2.2 (fixed log path)** and **Apache 2.4+ (dynamic log 
 - **Thread-safe**  
   Protects internal logger hash with `apr_thread_mutex`, compatible with `worker` and `event` MPM.
 
+# mod_make_homedir
+
+**mod_make_homedir** is an Apache HTTPD module that ensures the existence of critical directories such as `DocumentRoot`.  
+It prevents Apache graceful restarts from failing when a VirtualHost’s home directory has been deleted or is missing.
+
+- **Automatic Directory Creation**  
+  Recursively creates directories (`mkdir -p` style).
+
+- **Ownership and Permissions**  
+  Ensures secure ownership (`chown`) and permissions (`0700`) for the target directory.
+
+- **Symlink Protection**  
+  Uses `lstat()` to verify directories are real directories (not symlinks).
+
+- **Per-VirtualHost Configuration**  
+  Configure directory paths, users, and groups on a per-host basis.
+
+---
+
+## Apache mod_make_homedir Compilation
+
+```sh
+apxs -i -a -c mod_make_homedir.c
+```
+
+ - Configuration Directives
+ - MakeHomedirPath <path>
+ Path to the directory to ensure existence. Can be relative to ServerRoot.
+ - MakeHomedirUser <username>
+ User to own the directory.
+ - MakeHomedirGroup <groupname>
+Group to own the directory.
+
+
 ---
 
 ## Build & Install
@@ -39,6 +73,44 @@ It supports both **Apache 2.2 (fixed log path)** and **Apache 2.4+ (dynamic log 
 apxs -c -i -a mod_logdir_improved.c
 This will build and install mod_logdir_improved.so into your Apache modules directory, and add a LoadModule directive into httpd.conf.
 ```
+
+Example Configuration
+```apache
+<VirtualHost *:80>
+    ServerName example.com
+    DocumentRoot /home/user1/public_html
+
+    # Ensure the DocumentRoot exists with secure ownership
+    MakeHomedirPath /home/user1/public_html
+    MakeHomedirUser user
+    MakeHomedirGroup group
+    MakeHomedirPerms 0700
+
+    ErrorLog logs/example.com_error.log
+    CustomLog logs/example.com_access.log combined
+</VirtualHost>
+```
+
+With this configuration:
+
+ - If /var/www/example.com/public_html is missing, it will be recreated automatically.
+ - Ownership will be set to apache:apache.
+ - Permissions will be enforced as 0700.
+
+## Logging
+
+Any errors (failed mkdir, chown, or chmod) are reported to Apache’s error log.
+
+## Use Case
+
+This module is useful in shared hosting or automated environments where:
+
+Users may accidentally delete their home directories.
+
+Missing DocumentRoots cause Apache graceful restarts to fail.
+
+Administrators want to ensure directories are always recreated securely.
+---
 
 ## Configuration
 Example for Apache 2.4+:
