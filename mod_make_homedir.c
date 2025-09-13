@@ -58,6 +58,21 @@ typedef struct {
     int is_configured;
 } make_homedir_config;
 
+/* New structure for multiple entries */
+typedef struct {
+    const char *path;
+    const char *username;
+    const char *groupname;
+    const char *perms_str;
+    uid_t uid;
+    gid_t gid;
+    mode_t perms;
+} make_homedir_entry_t;
+
+typedef struct {
+    apr_array_header_t *entries;
+} make_homedir_config_t;
+
 /* -----------------------------------------
    Static function declarations
 ----------------------------------------- */
@@ -68,29 +83,17 @@ static int make_homedir_open_logs(apr_pool_t *pconf, apr_pool_t *plog, apr_pool_
    Configuration creation and merging
 ----------------------------------------- */
 static void *create_make_homedir_config(apr_pool_t *p, server_rec *s) {
-    make_homedir_config *conf = apr_pcalloc(p, sizeof(*conf));
-    conf->base_path = NULL;
-    conf->username = NULL;
-    conf->groupname = NULL;
-    conf->uid = (uid_t)-1;
-    conf->gid = (gid_t)-1;
-    conf->perms = 0700; // Default secure permissions
-    conf->is_configured = 0;
+    make_homedir_config_t *conf = apr_pcalloc(p, sizeof(*conf));
+    conf->entries = apr_array_make(p, 5, sizeof(make_homedir_entry_t));
     return conf;
 }
 
 static void *merge_make_homedir_config(apr_pool_t *p, void *basev, void *addv) {
-    make_homedir_config *base = (make_homedir_config*)basev;
-    make_homedir_config *add  = (make_homedir_config*)addv;
-    make_homedir_config *conf = apr_pcalloc(p, sizeof(*conf));
+    make_homedir_config_t *base = (make_homedir_config_t*)basev;
+    make_homedir_config_t *add  = (make_homedir_config_t*)addv;
+    make_homedir_config_t *conf = apr_pcalloc(p, sizeof(*conf));
     
-    conf->base_path = add->base_path ? add->base_path : base->base_path;
-    conf->username  = add->username ? add->username : base->username;
-    conf->groupname = add->groupname ? add->groupname : base->groupname;
-    conf->uid       = (add->uid != (uid_t)-1) ? add->uid : base->uid;
-    conf->gid       = (add->gid != (gid_t)-1) ? add->gid : base->gid;
-    conf->perms     = (add->perms != 0700) ? add->perms : base->perms;
-    conf->is_configured = add->is_configured || base->is_configured;
+    conf->entries = apr_array_append(p, base->entries, add->entries);
 
     return conf;
 }
@@ -98,48 +101,35 @@ static void *merge_make_homedir_config(apr_pool_t *p, void *basev, void *addv) {
 /* -----------------------------------------
    Directive handlers
 ----------------------------------------- */
-static const char *set_make_homedir_path(cmd_parms *cmd, void *dummy, const char *arg) {
-    make_homedir_config *conf = ap_get_module_config(cmd->server->module_config, &make_homedir_module);
-    conf->base_path = ap_server_root_relative(cmd->pool, arg);
-    if (!conf->base_path) {
-        return "MakeHomedirPath must be a valid path relative to ServerRoot.";
-    }
-    conf->is_configured = 1;
-    return NULL;
-}
+static const char *set_make_homedir_entry(cmd_parms *cmd, void *mconfig, const char *path_arg, const char *user_arg, const char *group_arg, const char *perms_arg) {
+    make_homedir_config_t *conf = (make_homedir_config_t*)mconfig;
+    make_homedir_entry_t *entry = apr_array_push(conf->entries);
 
-static const char *set_make_homedir_user(cmd_parms *cmd, void *dummy, const char *arg) {
-    struct passwd *pw = getpwnam(arg);
+    entry->path = ap_server_root_relative(cmd->pool, path_arg);
+    if (!entry->path) {
+        return "MakeHomedirEntries: Path must be a valid path relative to ServerRoot.";
+    }
+
+    entry->username = user_arg;
+    entry->groupname = group_arg;
+    entry->perms_str = perms_arg;
+    
+    struct passwd *pw = getpwnam(user_arg);
     if (!pw) {
-        return apr_pstrcat(cmd->pool, "Invalid user for MakeHomedirUser: ", arg, NULL);
+        return apr_pstrcat(cmd->pool, "MakeHomedirEntries: Invalid user: ", user_arg, NULL);
     }
-    make_homedir_config *conf = ap_get_module_config(cmd->server->module_config, &make_homedir_module);
-    conf->username = arg;
-    conf->uid = pw->pw_uid;
-    conf->is_configured = 1;
-    return NULL;
-}
+    entry->uid = pw->pw_uid;
 
-static const char *set_make_homedir_group(cmd_parms *cmd, void *dummy, const char *arg) {
-    struct group *gr = getgrnam(arg);
+    struct group *gr = getgrnam(group_arg);
     if (!gr) {
-        return apr_pstrcat(cmd->pool, "Invalid group for MakeHomedirGroup: ", arg, NULL);
+        return apr_pstrcat(cmd->pool, "MakeHomedirEntries: Invalid group: ", group_arg, NULL);
     }
-    make_homedir_config *conf = ap_get_module_config(cmd->server->module_config, &make_homedir_module);
-    conf->groupname = arg;
-    conf->gid = gr->gr_gid;
-    conf->is_configured = 1;
-    return NULL;
-}
+    entry->gid = gr->gr_gid;
+    
+    if (sscanf(perms_arg, "%o", &entry->perms) != 1) {
+        return apr_pstrcat(cmd->pool, "MakeHomedirEntries: Invalid octal permissions: ", perms_arg, NULL);
+    }
 
-static const char *set_make_homedir_perms(cmd_parms *cmd, void *dummy, const char *arg) {
-    mode_t perms = 0;
-    if (sscanf(arg, "%o", &perms) != 1) {
-        return "MakeHomedirPerms must be a valid octal number (e.g., 0755).";
-    }
-    make_homedir_config *conf = ap_get_module_config(cmd->server->module_config, &make_homedir_module);
-    conf->perms = perms;
-    conf->is_configured = 1;
     return NULL;
 }
 
@@ -244,14 +234,17 @@ static apr_status_t create_secure_recursive_dir(server_rec *s, const char *path,
    Apache Hooks
 ----------------------------------------- */
 static int make_homedir_open_logs(apr_pool_t *pconf, apr_pool_t *plog, apr_pool_t *ptemp, server_rec *s) {
-    make_homedir_config *conf = ap_get_module_config(s->module_config, &make_homedir_module);
+    make_homedir_config_t *conf = ap_get_module_config(s->module_config, &make_homedir_module);
+    make_homedir_entry_t *entries;
+    int i;
     
-    if (conf->is_configured) {
-        // Only run for Virtual Hosts with a configured path.
-        if (s->is_virtual && conf->base_path) {
+    if (conf && conf->entries) {
+        entries = (make_homedir_entry_t*)conf->entries->elts;
+        for (i = 0; i < conf->entries->nelts; i++) {
+            make_homedir_entry_t *entry = &entries[i];
             ap_log_error(APLOG_MARK, APLOG_DEBUG, 0, s,
-                         "mod_make_homedir: Processing VirtualHost %s", s->server_hostname);
-            if (create_secure_recursive_dir(s, conf->base_path, conf->uid, conf->gid, conf->perms) != APR_SUCCESS) {
+                         "mod_make_homedir: Processing entry for path %s", entry->path);
+            if (create_secure_recursive_dir(s, entry->path, entry->uid, entry->gid, entry->perms) != APR_SUCCESS) {
                 return HTTP_INTERNAL_SERVER_ERROR;
             }
         }
@@ -267,14 +260,8 @@ static void make_homedir_register_hooks(apr_pool_t *p) {
    Module Directives
 ----------------------------------------- */
 static const command_rec make_homedir_cmds[] = {
-    AP_INIT_TAKE1("MakeHomedirPath", set_make_homedir_path, NULL, RSRC_CONF,
-                  "Path to the directory to ensure existence. Can be relative to ServerRoot."),
-    AP_INIT_TAKE1("MakeHomedirUser", set_make_homedir_user, NULL, RSRC_CONF,
-                  "User for directory ownership."),
-    AP_INIT_TAKE1("MakeHomedirGroup", set_make_homedir_group, NULL, RSRC_CONF,
-                  "Group for directory ownership."),
-    AP_INIT_TAKE1("MakeHomedirPerms", set_make_homedir_perms, NULL, RSRC_CONF,
-                  "Permissions for the directory in octal (e.g., 0755)."),
+    AP_INIT_TAKE4("MakeHomedirEntries", set_make_homedir_entry, NULL, RSRC_CONF | ACCESS_CONF,
+                  "Specify multiple directories to ensure existence, with path, user, group, and permissions (octal)."),
     { NULL }
 };
 
