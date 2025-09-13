@@ -11,9 +11,10 @@
  * - MakeHomedirPath <path>
  * - MakeHomedirUser <username>
  * - MakeHomedirGroup <groupname>
+ * - MakeHomedirPerms <permissions> (new)
  *
  * - Automatically creates directories and their parents (`mkdir -p` style).
- * - Enforces secure permissions (0700) and ownership (`chown`) to a specified user/group.
+ * - Enforces secure permissions and ownership (`chown`) to a specified user/group.
  * - Protects against symlink attacks using `lstat`.
  *
  * Compilation:
@@ -52,13 +53,14 @@ typedef struct {
     const char *groupname;
     uid_t uid;
     gid_t gid;
+    mode_t perms;
     int is_configured;
 } make_homedir_config;
 
 /* -----------------------------------------
    Static function declarations
 ----------------------------------------- */
-static apr_status_t create_secure_recursive_dir(server_rec *s, const char *path, uid_t uid, gid_t gid);
+static apr_status_t create_secure_recursive_dir(server_rec *s, const char *path, uid_t uid, gid_t gid, mode_t perms);
 static int make_homedir_open_logs(apr_pool_t *pconf, apr_pool_t *plog, apr_pool_t *ptemp, server_rec *s);
 
 /* -----------------------------------------
@@ -71,6 +73,7 @@ static void *create_make_homedir_config(apr_pool_t *p, server_rec *s) {
     conf->groupname = NULL;
     conf->uid = (uid_t)-1;
     conf->gid = (gid_t)-1;
+    conf->perms = 0700; // Default secure permissions
     conf->is_configured = 0;
     return conf;
 }
@@ -85,6 +88,7 @@ static void *merge_make_homedir_config(apr_pool_t *p, void *basev, void *addv) {
     conf->groupname = add->groupname ? add->groupname : base->groupname;
     conf->uid       = (add->uid != (uid_t)-1) ? add->uid : base->uid;
     conf->gid       = (add->gid != (gid_t)-1) ? add->gid : base->gid;
+    conf->perms     = (add->perms != 0700) ? add->perms : base->perms;
     conf->is_configured = add->is_configured || base->is_configured;
 
     return conf;
@@ -127,10 +131,21 @@ static const char *set_make_homedir_group(cmd_parms *cmd, void *dummy, const cha
     return NULL;
 }
 
+static const char *set_make_homedir_perms(cmd_parms *cmd, void *dummy, const char *arg) {
+    mode_t perms = 0;
+    if (sscanf(arg, "%o", &perms) != 1) {
+        return "MakeHomedirPerms must be a valid octal number (e.g., 0755).";
+    }
+    make_homedir_config *conf = ap_get_module_config(cmd->server->module_config, &make_homedir_module);
+    conf->perms = perms;
+    conf->is_configured = 1;
+    return NULL;
+}
+
 /* -----------------------------------------
    Core functionality
 ----------------------------------------- */
-static apr_status_t create_secure_recursive_dir(server_rec *s, const char *path, uid_t uid, gid_t gid) {
+static apr_status_t create_secure_recursive_dir(server_rec *s, const char *path, uid_t uid, gid_t gid, mode_t perms) {
     struct stat st;
     apr_pool_t *temp_pool;
     apr_pool_create(&temp_pool, s->process->pconf);
@@ -145,7 +160,7 @@ static apr_status_t create_secure_recursive_dir(server_rec *s, const char *path,
     while ((slash = strchr(slash, '/')) != NULL) {
         *slash = '\0';
         
-        if (mkdir(parent_path, S_IRWXU) == -1) {
+        if (mkdir(parent_path, perms) == -1) {
             if (errno != EEXIST) {
                 ap_log_error(APLOG_MARK, APLOG_ERR, errno, s,
                              "mod_make_homedir: Failed to create parent directory %s: %s", parent_path, strerror(errno));
@@ -177,7 +192,7 @@ static apr_status_t create_secure_recursive_dir(server_rec *s, const char *path,
     }
 
     // Now, create the final directory
-    if (mkdir(path, S_IRWXU) == -1) {
+    if (mkdir(path, perms) == -1) {
         if (errno != EEXIST) {
             ap_log_error(APLOG_MARK, APLOG_ERR, errno, s,
                          "mod_make_homedir: Failed to create final directory %s: %s", path, strerror(errno));
@@ -202,8 +217,8 @@ static apr_status_t create_secure_recursive_dir(server_rec *s, const char *path,
                 return APR_EGENERAL;
             }
         }
-        if ((st.st_mode & S_IRWXU) != S_IRWXU) {
-             if (chmod(path, S_IRWXU) == -1) {
+        if ((st.st_mode & perms) != perms) {
+             if (chmod(path, perms) == -1) {
                 ap_log_error(APLOG_MARK, APLOG_ERR, errno, s,
                              "mod_make_homedir: chmod failed for %s: %s", path, strerror(errno));
                 apr_pool_destroy(temp_pool);
@@ -227,7 +242,7 @@ static int make_homedir_open_logs(apr_pool_t *pconf, apr_pool_t *plog, apr_pool_
         if (s->is_virtual && conf->base_path) {
             ap_log_error(APLOG_MARK, APLOG_DEBUG, 0, s,
                          "mod_make_homedir: Processing VirtualHost %s", s->server_hostname);
-            if (create_secure_recursive_dir(s, conf->base_path, conf->uid, conf->gid) != APR_SUCCESS) {
+            if (create_secure_recursive_dir(s, conf->base_path, conf->uid, conf->gid, conf->perms) != APR_SUCCESS) {
                 return HTTP_INTERNAL_SERVER_ERROR;
             }
         }
@@ -249,6 +264,8 @@ static const command_rec make_homedir_cmds[] = {
                   "User for directory ownership."),
     AP_INIT_TAKE1("MakeHomedirGroup", set_make_homedir_group, NULL, RSRC_CONF,
                   "Group for directory ownership."),
+    AP_INIT_TAKE1("MakeHomedirPerms", set_make_homedir_perms, NULL, RSRC_CONF,
+                  "Permissions for the directory in octal (e.g., 0755)."),
     { NULL }
 };
 
