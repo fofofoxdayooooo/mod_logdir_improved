@@ -1,6 +1,6 @@
-# mod_logdir
+# mod_logdir_improved
 
-**mod_logdir** is an Apache HTTP Server module that provides **per-virtual-host dynamic log directories** with secure ownership and automatic directory creation.  
+**mod_logdir_improved** is an Apache HTTP Server module that provides **per-virtual-host dynamic log directories** with secure ownership and automatic directory creation.  
 It supports both **Apache 2.2 (fixed log path)** and **Apache 2.4+ (dynamic log paths with LogFormat expressions)**.
 
 ---
@@ -36,14 +36,14 @@ It supports both **Apache 2.2 (fixed log path)** and **Apache 2.4+ (dynamic log 
 
 ```bash
 # Requires Apache dev tools (apxs)
-apxs -c -i -a mod_logdir.c
-This will build and install mod_logdir.so into your Apache modules directory, and add a LoadModule directive into httpd.conf.
+apxs -c -i -a mod_logdir_improved.c
+This will build and install mod_logdir_improved.so into your Apache modules directory, and add a LoadModule directive into httpd.conf.
 ```
 
 ## Configuration
 Example for Apache 2.4+:
 ```apache
-LoadModule logdir_module modules/mod_logdir.so
+LoadModule logdir_module modules/mod_logdir_improved.so
 
 <VirtualHost *:80>
     ServerName example.com
@@ -74,7 +74,7 @@ For Apache 2.2, only LogDirPath is supported and logs are written in Common Log 
 Example for apache2.2:
 ```apache
 # Load Module
-LoadModule logdir_module modules/mod_logdir.so
+LoadModule logdir_module modules/mod_logdir_improved.so
 
 <VirtualHost *:80>
     ServerName legacy.example.com
