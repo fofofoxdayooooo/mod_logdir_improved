@@ -55,15 +55,6 @@ It prevents Apache graceful restarts from failing when a VirtualHost’s home di
 apxs -i -a -c mod_make_homedir.c
 ```
 
- - Configuration Directives
- - MakeHomedirPath <path>
- Path to the directory to ensure existence. Can be relative to ServerRoot.
- - MakeHomedirUser <username>
- User to own the directory.
- - MakeHomedirGroup <groupname>
-Group to own the directory.
-
-
 ---
 
 ## Build & Install
