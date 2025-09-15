@@ -81,10 +81,9 @@ Example Configuration
     DocumentRoot /home/user1/public_html
 
     # Ensure the DocumentRoot exists with secure ownership
-    MakeHomedirPath /home/user1/public_html
-    MakeHomedirUser user
-    MakeHomedirGroup group
-    MakeHomedirPerms 0700
+    MakeHomedirEntries /home/user1/public_html user group 0700
+    MakeHomedirEntries /home/user1/logs         user group 0750
+    MakeHomedirEntries /home/user1/tmp          user group 0700
 
     ErrorLog logs/example.com_error.log
     CustomLog logs/example.com_access.log combined
