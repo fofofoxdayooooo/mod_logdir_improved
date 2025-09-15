@@ -260,7 +260,7 @@ static void make_homedir_register_hooks(apr_pool_t *p) {
    Module Directives
 ----------------------------------------- */
 static const command_rec make_homedir_cmds[] = {
-    AP_INIT_TAKE4("MakeHomedirEntries", set_make_homedir_entry, NULL, RSRC_CONF | ACCESS_CONF,
+    AP_INIT_TAKE4("MakeHomedirEntries", set_make_homedir_entry, NULL, RSRC_CONF,
                   "Specify multiple directories to ensure existence, with path, user, group, and permissions (octal)."),
     { NULL }
 };
